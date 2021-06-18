@@ -45,7 +45,7 @@ end
 # we must use
 # seVec = Manifolds.hat(M, p, coords)
 
-function Base.:∘(p::T, q::T) where T <: AbstractLieGroup
+function Base.:∘(p::AbstractLieGroup, q::AbstractLieGroup)
     M = manifold(p)
     typeof(p)(compose(M, p[], q[]))
 end
@@ -79,12 +79,22 @@ function Base.log(p::AbstractLieGroup) #look into inverse_retract with RightActi
     return g(log(M, e, p[]))
 end
 
-function Base.log(p::T, q::T) where T <: AbstractLieGroup 
+function Base.log(p::AbstractLieGroup, q::AbstractLieGroup)
     M = manifold(p)
     g = convert(AbstractLieAlgebra, typeof(p))
     return g(log(M, p[], q[]))
 end
 
+function Manifolds.group_exp(X::AbstractLieAlgebra) #look into retract with RightAction
+    M = manifold(X)
+    G = convert(AbstractLieGroup, typeof(X))
+    return G(group_exp(M, X[]))
+end
+
+function Manifolds.distance(p::AbstractLieGroup, q::AbstractLieGroup)
+    M = manifold(p)
+    return distance(M, p[], q[])
+end
 
 ##==============================================================================
 ## SpecialEuclidean SE{N} and se{N}
@@ -166,6 +176,18 @@ manifold(::se{N,T}) where {N,T} = SpecialEuclidean(N)
 Base.convert(::Type{AbstractLieGroup}, ::Type{se{N, T}}) where {N,T} = SE{N}
 Base.convert(::Type{AbstractLieAlgebra}, ::Type{SE{N, T}}) where {N,T} = se{N}
 
+
+# function default_point_type(M::SpecialOrthogonal, ::Type{ET}=Float64, ::Type{AT}=SMatrix) where {ET, AT}
+#     s = representation_size(M)
+#     return AT{s..., ET, prod(s)}
+# end
+
+# function default_point_type(M::SpecialEuclidean, ::Type{ET}=Float64, ::Type{AT}=SArray) where {ET, AT}
+    
+#     s1 = representation_size(M.manifold[1])
+#     s2 = representation_size(M.manifold[2])
+#     return ProductRepr{Tuple{AT{Tuple{s1[1]}, ET}, AT{Tuple{s2[1],s2[2]}, ET}}}
+# end
 
 
 ##------------------------------------------------------------------------------
@@ -267,14 +289,90 @@ manifold(::so{N,T}) where {N,T} = SpecialOrthogonal(N)
 Base.convert(::Type{AbstractLieGroup}, ::Type{so{N, T}}) where {N,T} = SO{N}
 Base.convert(::Type{AbstractLieAlgebra}, ::Type{SO{N, T}}) where {N,T} = so{N}
 
+
+##==============================================================================
+## TranslationGroup 𝕋{N} and 𝕥{N} feels a bit redundant, but adding for completeness
+##==============================================================================
+export 𝕥, 𝕋
+
+"""
+    $TYPEDEF
+
+Lie Group representation for `Manifolds.TranslationGroup(N)`
+
+Related
+
+[`𝕥`](@ref)
+"""
+struct 𝕋{N, T} <: AbstractLieGroup
+  value::T # Group
+end
+
+#TODO assert N and/or 𝕋(p::ProductRepr) = ... 
+𝕋{N}(p::SVector{N,T}) where {N, T} = 𝕋{N, typeof(p)}(p)
+
+𝕋{N}() where N = _identity(𝕋{N})
+
+function 𝕋(t::Vector{T}) where T<:Real
+    N = size(t,1)
+   
+    return 𝕋{N}(SVector{N, T}(t))
+end
+
+manifold(::𝕋{N,T}) where {N,T} = TranslationGroup(N)
+
+
+#Default 𝕋{N} representation
+function _identity(::Type{𝕋{N}}, ::Type{T}=Float64) where {N, T}
+    t = zeros(SVector{N, T})
+    𝕋{N}(t)
+end
+
+
+"""
+    $TYPEDEF
+
+Lie algebra representation for `Manifolds.TranslationGroup(N)`
+
+Related
+
+[`𝕋`](@ref)
+"""
+struct 𝕥{N, T} <: AbstractLieAlgebra
+  value::T # Tangent Vector (Lie algebra)
+end
+
+#TODO assert N and/or 𝕥(X::ProductRepr) = ... 
+𝕥{N}(X::SVector{N,T}) where {N,T} = 𝕥{N, typeof(X)}(X)
+
+function 𝕥{N}(X::AbstractVector) where N
+    l = length(X)
+    @assert manifold_dimension(TranslationGroup(N)) == l "X dimension, $l, does not match manifold dimension, $N"
+    
+    M = TranslationGroup(N)
+    
+    e = _identity(𝕋{N}, eltype(X))[]
+    _X = hat(M, e, X)
+        
+    return 𝕥{N}(_X)
+end
+
+manifold(::𝕥{N,T}) where {N,T} = TranslationGroup(N)
+
+
+Base.convert(::Type{AbstractLieGroup}, ::Type{𝕥{N, T}}) where {N,T} = 𝕋{N}
+Base.convert(::Type{AbstractLieAlgebra}, ::Type{𝕋{N, T}}) where {N,T} = 𝕥{N}
+
 ##==============================================================================
 ## RoME like functions sandbox
 ##==============================================================================
+export PosePose, PosePose_x, PosePose_d, Prior_d
 
 # this is in the "local frame" sequential, a similar operation can be done with the group_log (but together)
 function PosePose(ⁱmⱼ::SE{N}, ʷxᵢ::SE{N}, ʷxⱼ::SE{N}) where N
 
     ʷT̂ⱼ = ʷxᵢ ∘ ⁱmⱼ
+
     ʲT̂ⱼ = ʷxⱼ \ ʷT̂ⱼ
    
     X = log(ʲT̂ⱼ)
@@ -288,10 +386,33 @@ function PosePose_x(ⁱmⱼ::SE{N}, ʷxᵢ::SE{N}, ʷxⱼ::SE{N}) where N
     M = manifold(ʷxᵢ)
 
     ʷT̂ⱼ = ʷxᵢ ∘ ⁱmⱼ
-    X = se{N}(log(M, ʷT̂ⱼ[], ʷxⱼ[])) # TODO check sign, this (currently) is the vector at ʷT̂ⱼ that points to ʷxⱼ
+    X = se{N}(log(M, ʷxⱼ[], ʷT̂ⱼ[])) # TODO check sign, this (currently) is the vector at ʷT̂ⱼ that points to ʷxⱼ
    
     return vee(X)
 end
+
+# this is in the "global frame" e component wise on submanifolds, but uses distance
+function PosePose_d(m, p, q)
+
+    q̂ = p ∘ m
+    return distance(q, q̂)
+
+end
+
+#manifolds point to manifold point factor
+function PointPoint_d(m, p, q)
+
+    q̂ = p ∘ m
+    return distance(q, q̂)
+
+end
+
+# manifold prior factor
+function Prior_d(meas, p)	
+#		
+    return distance(meas, p)
+end
+
 
 
 function Pose2Pose2(meas, wxi, wxj)
@@ -299,7 +420,6 @@ function Pose2Pose2(meas, wxi, wxj)
     jTjhat = SE2(wxj) \ wTjhat
     return se2vee(jTjhat)
 end
-
 
 
 end
